@@ -20,6 +20,8 @@ class Lei extends Model
         'numero',
         'ano',
         'abrangencia',
+        'estado',  // Novo campo
+        'cidade',  // Novo campo
         'status',
         'json_original',
     ];

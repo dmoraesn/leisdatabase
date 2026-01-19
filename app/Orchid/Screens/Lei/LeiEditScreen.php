@@ -6,13 +6,16 @@ namespace App\Orchid\Screens\Lei;
 
 use App\Models\Lei;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 use Orchid\Screen\Actions\Button;
-use Orchid\Screen\Screen;
-use Orchid\Support\Facades\Layout;
-use Orchid\Support\Facades\Toast;
+use Orchid\Screen\Fields\Group;
 use Orchid\Screen\Fields\Input;
 use Orchid\Screen\Fields\Select;
 use Orchid\Screen\Fields\Upload;
+use Orchid\Screen\Screen;
+use Orchid\Support\Facades\Layout;
+use Orchid\Support\Facades\Toast;
 
 class LeiEditScreen extends Screen
 {
@@ -21,12 +24,42 @@ class LeiEditScreen extends Screen
      */
     public $lei;
 
-    public function query(Lei $lei): iterable
+    /**
+     * Dados auxiliares para os selects
+     */
+    public array $estados = [];
+    public array $cidades = [];
+
+    public function query(Lei $lei, Request $request): iterable
     {
         $this->lei = $lei;
 
+        // 1. Carregar Estados
+        $this->estados = Cache::remember('ibge_estados', 86400, function () {
+            $response = Http::get('https://servicodados.ibge.gov.br/api/v1/localidades/estados?orderBy=nome');
+            return $response->ok()
+                ? collect($response->json())->pluck('sigla', 'sigla')->toArray()
+                : [];
+        });
+
+        // 2. Definir o Estado Atual (Prioridade: Input do Usuário > Banco de Dados)
+        $estadoAtual = $request->input('lei.estado') ?? $lei->estado;
+
+        // 3. Carregar Cidades se houver estado definido
+        if ($estadoAtual) {
+            $cacheKey = "ibge_cidades_{$estadoAtual}";
+            $this->cidades = Cache::remember($cacheKey, 86400, function () use ($estadoAtual) {
+                $response = Http::get("https://servicodados.ibge.gov.br/api/v1/localidades/estados/{$estadoAtual}/municipios");
+                return $response->ok()
+                    ? collect($response->json())->pluck('nome', 'nome')->toArray()
+                    : [];
+            });
+        }
+
         return [
             'lei' => $lei,
+            'estados' => $this->estados,
+            'cidades' => $this->cidades,
         ];
     }
 
@@ -53,11 +86,13 @@ class LeiEditScreen extends Screen
                     ->title('Título')
                     ->required(),
 
-                Input::make('lei.numero')
-                    ->title('Número'),
+                Group::make([
+                    Input::make('lei.numero')
+                        ->title('Número'),
 
-                Input::make('lei.ano')
-                    ->title('Ano'),
+                    Input::make('lei.ano')
+                        ->title('Ano'),
+                ]),
 
                 Select::make('lei.abrangencia')
                     ->title('Abrangência')
@@ -66,6 +101,21 @@ class LeiEditScreen extends Screen
                         'estadual'  => 'Estadual',
                         'municipal' => 'Municipal',
                     ]),
+
+                Group::make([
+                    Select::make('lei.estado')
+                        ->title('Estado (UF)')
+                        ->options($this->estados)
+                        ->empty('Selecione')
+                        // submitOnChange recarrega a tela para atualizar a lista de cidades
+                        ->submitOnChange(),
+
+                    Select::make('lei.cidade')
+                        ->title('Cidade')
+                        ->options($this->cidades)
+                        ->empty('Selecione o Estado primeiro')
+                        ->disabled(empty($this->cidades)),
+                ]),
 
                 Upload::make('lei.pdf')
                     ->title('PDF da Lei')
@@ -96,6 +146,8 @@ class LeiEditScreen extends Screen
             'numero'      => $data['numero'] ?? null,
             'ano'         => $data['ano'] ?? null,
             'abrangencia' => $data['abrangencia'] ?? null,
+            'estado'      => $data['estado'] ?? null,
+            'cidade'      => $data['cidade'] ?? null,
         ]);
 
         if (! empty($data['pdf'])) {

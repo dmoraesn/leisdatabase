@@ -57,6 +57,15 @@ class LeiListScreen extends Screen
                 TD::make('titulo', 'Título')
                     ->render(fn (Lei $lei) => Str::limit($lei->titulo, 70)),
 
+                // Nova Coluna de Cidade/UF
+                TD::make('local', 'Local')
+                    ->render(function (Lei $lei) {
+                        if ($lei->cidade && $lei->estado) {
+                            return $lei->cidade . ' - ' . $lei->estado;
+                        }
+                        return $lei->estado ?? '—';
+                    }),
+
                 TD::make('numero', 'Número')
                     ->alignCenter()
                     ->render(fn (Lei $lei) => $lei->numero ?? '—'),
@@ -66,13 +75,13 @@ class LeiListScreen extends Screen
 
                 TD::make('abrangencia', 'Abrangência')
                     ->alignCenter()
-                    ->render(fn (Lei $lei) => ucfirst($lei->abrangencia)),
+                    ->render(fn (Lei $lei) => ucfirst($lei->abrangencia ?? '')),
 
                 TD::make('status', 'Status')
                     ->alignCenter()
                     ->render(function (Lei $lei) {
                         $html = match ($lei->status) {
-                            'processado'  => '<span class="badge bg-success">Processado</span>',
+                            'processada', 'processado'  => '<span class="badge bg-success">Processado</span>',
                             'processando' => '<span class="badge bg-warning">Processando</span>',
                             'erro'        => '<span class="badge bg-danger">Erro</span>',
                             default       => '<span class="badge bg-secondary">Pendente</span>',
