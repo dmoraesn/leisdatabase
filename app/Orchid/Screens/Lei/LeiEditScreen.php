@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\Orchid\Screens\Lei;
 
+use App\Jobs\ProcessarLeiPdfJob;
 use App\Models\Lei;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Orchid\Screen\Actions\Button;
+use Orchid\Screen\Actions\Link;
 use Orchid\Screen\Fields\Group;
 use Orchid\Screen\Fields\Input;
 use Orchid\Screen\Fields\Select;
@@ -20,36 +22,46 @@ use Orchid\Support\Facades\Toast;
 class LeiEditScreen extends Screen
 {
     /**
-     * ⚠️ NÃO tipar esta propriedade no Orchid
+     * ⚠️ Propriedade pública NÃO tipada (regra do Orchid)
      */
     public $lei;
 
     /**
-     * Dados auxiliares para os selects
+     * Dados auxiliares
      */
     public array $estados = [];
     public array $cidades = [];
 
+    /**
+     * Query inicial
+     */
     public function query(Lei $lei, Request $request): iterable
     {
         $this->lei = $lei;
 
-        // 1. Carregar Estados
+        // Estados (IBGE)
         $this->estados = Cache::remember('ibge_estados', 86400, function () {
-            $response = Http::get('https://servicodados.ibge.gov.br/api/v1/localidades/estados?orderBy=nome');
+            $response = Http::get(
+                'https://servicodados.ibge.gov.br/api/v1/localidades/estados?orderBy=nome'
+            );
+
             return $response->ok()
                 ? collect($response->json())->pluck('sigla', 'sigla')->toArray()
                 : [];
         });
 
-        // 2. Definir o Estado Atual (Prioridade: Input do Usuário > Banco de Dados)
+        // Estado atual (input > banco)
         $estadoAtual = $request->input('lei.estado') ?? $lei->estado;
 
-        // 3. Carregar Cidades se houver estado definido
+        // Cidades (IBGE)
         if ($estadoAtual) {
             $cacheKey = "ibge_cidades_{$estadoAtual}";
+
             $this->cidades = Cache::remember($cacheKey, 86400, function () use ($estadoAtual) {
-                $response = Http::get("https://servicodados.ibge.gov.br/api/v1/localidades/estados/{$estadoAtual}/municipios");
+                $response = Http::get(
+                    "https://servicodados.ibge.gov.br/api/v1/localidades/estados/{$estadoAtual}/municipios"
+                );
+
                 return $response->ok()
                     ? collect($response->json())->pluck('nome', 'nome')->toArray()
                     : [];
@@ -57,26 +69,50 @@ class LeiEditScreen extends Screen
         }
 
         return [
-            'lei' => $lei,
+            'lei'     => $lei,
             'estados' => $this->estados,
             'cidades' => $this->cidades,
         ];
     }
 
+    /**
+     * Nome da tela
+     */
     public function name(): string
     {
         return 'Editar Lei';
     }
 
+    /**
+     * Barra de ações
+     */
     public function commandBar(): iterable
     {
         return [
             Button::make('Salvar')
                 ->icon('bs.save')
                 ->method('save'),
+
+            Link::make('Revisar Importação')
+                ->icon('bs.search')
+                ->route('platform.leis.revisao', $this->lei)
+                ->canSee($this->lei->status === 'processada'),
+
+            Button::make('Reprocessar PDF')
+                ->icon('bs.arrow-repeat')
+                ->method('reprocessarPdf')
+                ->confirm(
+                    'O PDF será reprocessado. ' .
+                    'Artigos automáticos serão recriados, ' .
+                    'mas ajustes manuais serão preservados.'
+                )
+                ->canSee($this->lei->hasPdf()),
         ];
     }
 
+    /**
+     * Layout
+     */
     public function layout(): iterable
     {
         return [
@@ -91,6 +127,7 @@ class LeiEditScreen extends Screen
                         ->title('Número'),
 
                     Input::make('lei.ano')
+                        ->type('number')
                         ->title('Ano'),
                 ]),
 
@@ -100,14 +137,14 @@ class LeiEditScreen extends Screen
                         'federal'   => 'Federal',
                         'estadual'  => 'Estadual',
                         'municipal' => 'Municipal',
-                    ]),
+                    ])
+                    ->empty('Selecione'),
 
                 Group::make([
                     Select::make('lei.estado')
                         ->title('Estado (UF)')
                         ->options($this->estados)
                         ->empty('Selecione')
-                        // submitOnChange recarrega a tela para atualizar a lista de cidades
                         ->submitOnChange(),
 
                     Select::make('lei.cidade')
@@ -133,10 +170,13 @@ class LeiEditScreen extends Screen
 
     /*
     |--------------------------------------------------------------------------
-    | Action
+    | Actions
     |--------------------------------------------------------------------------
     */
 
+    /**
+     * Salva alterações da Lei
+     */
     public function save(Request $request, Lei $lei): void
     {
         $data = $request->get('lei');
@@ -150,11 +190,34 @@ class LeiEditScreen extends Screen
             'cidade'      => $data['cidade'] ?? null,
         ]);
 
+        // Se PDF foi alterado, sincroniza e reprocessa automaticamente
         if (! empty($data['pdf'])) {
             $lei->attachment()->sync($data['pdf']);
             $lei->update(['status' => 'processando']);
         }
 
         Toast::success('Lei atualizada com sucesso.');
+    }
+
+    /**
+     * Reprocessa explicitamente o PDF
+     */
+    public function reprocessarPdf(Lei $lei): void
+    {
+        $attachment = $lei->attachment()
+            ->orderBy('sort')
+            ->first();
+
+        if (! $attachment) {
+            Toast::error('Nenhum PDF encontrado para esta lei.');
+            return;
+        }
+
+        ProcessarLeiPdfJob::dispatch(
+            $lei->id,
+            $attachment->id
+        );
+
+        Toast::info('PDF enviado para reprocessamento.');
     }
 }
