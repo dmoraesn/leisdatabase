@@ -7,16 +7,18 @@ namespace App\Orchid\Screens\Lei;
 use App\Models\Artigo;
 use App\Models\Lei;
 use Illuminate\Http\Request;
+use Illuminate\Support\HtmlString;
 use Orchid\Screen\Actions\Button;
 use Orchid\Screen\Actions\Link;
+use Orchid\Screen\Actions\ModalToggle;
+use Orchid\Screen\Fields\Input;
+use Orchid\Screen\Fields\Select;
+use Orchid\Screen\Fields\TextArea;
 use Orchid\Screen\Screen;
 use Orchid\Screen\TD;
+use Orchid\Support\Color;
 use Orchid\Support\Facades\Layout;
 use Orchid\Support\Facades\Toast;
-use Orchid\Support\Color;
-use Orchid\Screen\Fields\Input;
-use Orchid\Screen\Fields\TextArea;
-use Orchid\Screen\Fields\Select;
 
 class LeiImportacaoReviewScreen extends Screen
 {
@@ -25,12 +27,15 @@ class LeiImportacaoReviewScreen extends Screen
      */
     public $lei = null;
 
+    /**
+     * Query data.
+     */
     public function query(Lei $lei): iterable
     {
         $this->lei = $lei;
 
         return [
-            'lei'     => $lei,
+            'lei' => $lei,
             'artigos' => $lei->artigos()
                 ->orderBy('ordem')
                 ->orderBy('id')
@@ -38,19 +43,28 @@ class LeiImportacaoReviewScreen extends Screen
         ];
     }
 
+    /**
+     * Display header name.
+     */
     public function name(): string
     {
         return 'Revisão de Importação da Lei';
     }
 
+    /**
+     * Display header description.
+     */
     public function description(): string
     {
         return sprintf(
-            'Lei nº %s — Revisão dos artigos importados automaticamente',
+            'Lei nº %s — clique em um artigo para visualizar ou editar',
             $this->lei->numero ?? '—'
         );
     }
 
+    /**
+     * Command bar.
+     */
     public function commandBar(): iterable
     {
         return [
@@ -65,6 +79,9 @@ class LeiImportacaoReviewScreen extends Screen
         ];
     }
 
+    /**
+     * Layout.
+     */
     public function layout(): iterable
     {
         return [
@@ -80,74 +97,53 @@ class LeiImportacaoReviewScreen extends Screen
                     ->render(fn (Artigo $a) => "Art. {$a->numero}"),
 
                 TD::make('confidence', 'Confiança')
-                    ->width(120)
+                    ->width(110)
                     ->alignCenter()
-                    ->render(function (Artigo $a) {
-                        return match ($a->confidence) {
+                    ->render(fn (Artigo $a) =>
+                        new HtmlString(match ($a->confidence) {
                             'high'   => '<span class="badge bg-success">Alta</span>',
                             'medium' => '<span class="badge bg-warning text-dark">Média</span>',
                             'low'    => '<span class="badge bg-danger">Baixa</span>',
                             default  => '<span class="badge bg-secondary">—</span>',
-                        };
-                    }),
+                        })
+                    ),
 
                 TD::make('origem', 'Origem')
                     ->width(120)
                     ->alignCenter()
-                    ->render(function (Artigo $a) {
-                        return $a->origem === 'manual'
-                            ? '<span class="badge bg-secondary">Manual</span>'
-                            : '<span class="badge bg-primary">Automático</span>';
-                    }),
+                    ->render(fn (Artigo $a) =>
+                        new HtmlString(
+                            '<span class="badge bg-info text-dark">' .
+                            ucfirst($a->origem ?? 'automático') .
+                            '</span>'
+                        )
+                    ),
 
-                TD::make('texto', 'Trecho')
-                    ->style('min-width: 480px; max-width: 650px;')
+                TD::make('texto', 'Texto do Artigo')
+                    ->style('min-width: 780px;')
                     ->render(function (Artigo $a) {
-                        return sprintf(
-                            '<div style="
-                                max-height: 80px;
-                                overflow: hidden;
-                                line-height: 1.5;
-                                white-space: pre-wrap;
+                        return ModalToggle::make(e(str($a->texto)->limit(500)))
+                            ->modal('artigoModal')
+                            ->asyncParameters([
+                                // parâmetro NÃO conflita com a rota
+                                'artigo_id' => $a->id,
+                            ])
+                            ->style('
+                                display: block;
                                 text-align: justify;
-                                font-size: 0.9em;
+                                white-space: pre-wrap;
                                 color: #4a5568;
-                            ">
-                                %s
-                            </div>',
-                            e(str($a->texto)->limit(220))
-                        );
-                    }),
-
-                TD::make(__('Ações'))
-                    ->width(170)
-                    ->alignRight()
-                    ->render(function (Artigo $a) {
-                        return '<div class="d-flex justify-content-end gap-1">' .
-
-                            Button::make('Ver mais')
-                                ->icon('bs.eye')
-                                ->method('asyncGetArtigo')
-                                ->asyncParameters(['artigo' => $a->id])
-                                ->modal('artigoModal')
-                                ->type(Color::PRIMARY)
-                                ->render() .
-
-                            Button::make('')
-                                ->icon('bs.trash')
-                                ->confirm('Deseja realmente excluir este artigo?')
-                                ->method('deleteArtigo')
-                                ->parameters(['id' => $a->id])
-                                ->type(Color::DANGER)
-                                ->render() .
-
-                        '</div>';
+                                text-decoration: none;
+                                cursor: pointer;
+                                line-height: 1.6;
+                            ');
                     }),
             ]),
 
             Layout::modal('artigoModal', Layout::rows([
 
-                Input::make('artigo.id')->type('hidden'),
+                Input::make('artigo.id')
+                    ->type('hidden'),
 
                 Input::make('artigo.numero')
                     ->title('Número do Artigo')
@@ -156,7 +152,7 @@ class LeiImportacaoReviewScreen extends Screen
                 TextArea::make('artigo.texto')
                     ->title('Texto Completo')
                     ->rows(18)
-                    ->style('font-family: serif; font-size: 15px;')
+                    ->style('font-family: monospace; font-size: 14px;')
                     ->required(),
 
                 Select::make('artigo.confidence')
@@ -169,10 +165,10 @@ class LeiImportacaoReviewScreen extends Screen
                     ->empty('—'),
 
             ]))
+                ->title('Artigo da Lei')
+                ->size('modal-xl')
                 ->async('asyncGetArtigo')
                 ->method('saveArtigo')
-                ->title('Revisão do Artigo')
-                ->size('modal-lg')
                 ->applyButton('Salvar alterações'),
         ];
     }
@@ -183,40 +179,55 @@ class LeiImportacaoReviewScreen extends Screen
     |--------------------------------------------------------------------------
     */
 
-    public function asyncGetArtigo(Artigo $artigo): array
+    /**
+     * Load article data for modal.
+     *
+     * A assinatura PRECISA aceitar Lei $lei
+     * porque a rota possui {lei}.
+     */
+    public function asyncGetArtigo(Lei $lei, Request $request): array
     {
-        return ['artigo' => $artigo];
+        $artigoId = (int) $request->get('artigo_id');
+
+        $artigo = Artigo::findOrFail($artigoId);
+
+        return [
+            'artigo' => $artigo,
+        ];
     }
 
-    public function saveArtigo(Request $request): void
+    /**
+     * Save article changes.
+     *
+     * A assinatura PRECISA aceitar Lei $lei
+     * porque a rota possui {lei}.
+     */
+    public function saveArtigo(Lei $lei, Request $request): void
     {
         $data = $request->validate([
-            'artigo.id'         => 'required|integer|exists:artigos,id',
+            'artigo.id'         => 'required|exists:artigos,id',
             'artigo.numero'     => 'required|string|max:20',
             'artigo.texto'      => 'required|string',
             'artigo.confidence' => 'nullable|in:high,medium,low',
         ]);
 
-        Artigo::findOrFail($data['artigo']['id'])
-            ->update(array_merge(
-                $data['artigo'],
-                ['origem' => 'manual']
-            ));
+        Artigo::whereKey($data['artigo']['id'])
+            ->update($data['artigo']);
 
         Toast::success('Artigo atualizado com sucesso.');
     }
 
-    public function deleteArtigo(int $id): void
+    /**
+     * Mark lei as processed.
+     *
+     * Lei $lei é resolvida via route-model-binding.
+     */
+    public function marcarRevisado(Lei $lei, Request $request): void
     {
-        Artigo::findOrFail($id)->delete();
-        Toast::info('Artigo removido.');
-    }
+        $lei->update([
+            'status' => 'processada',
+        ]);
 
-    public function marcarRevisado(): void
-    {
-        if ($this->lei) {
-            $this->lei->update(['status' => 'processada']);
-            Toast::success('Lei marcada como revisada.');
-        }
+        Toast::success('Lei marcada como revisada.');
     }
 }

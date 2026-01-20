@@ -19,7 +19,13 @@ use App\Orchid\Screens\Lei\LeiImportacaoReviewScreen;
 
 /*
 |--------------------------------------------------------------------------
-| Dashboard Principal
+| Rotas do Painel Administrativo (Orchid Platform)
+|--------------------------------------------------------------------------
+*/
+
+/*
+|--------------------------------------------------------------------------
+| Dashboard
 |--------------------------------------------------------------------------
 */
 Route::screen('/main', PlatformScreen::class)
@@ -32,18 +38,18 @@ Route::screen('/main', PlatformScreen::class)
 */
 Route::screen('profile', UserProfileScreen::class)
     ->name('platform.profile')
-    ->breadcrumbs(function (Trail $trail) {
-        return $trail
-            ->parent('platform.index')
-            ->push(__('Profile'), route('platform.profile'));
-    });
+    ->breadcrumbs(fn (Trail $trail) => $trail
+        ->parent('platform.index')
+        ->push(__('Perfil'), route('platform.profile'))
+    );
 
 /*
 |--------------------------------------------------------------------------
 | Gerenciamento de Usuários
 |--------------------------------------------------------------------------
 */
-Route::prefix('users')->group(function () {
+Route::prefix('users')->group(function (): void {
+
     Route::screen('/', UserListScreen::class)
         ->name('platform.systems.users');
 
@@ -59,7 +65,8 @@ Route::prefix('users')->group(function () {
 | Gerenciamento de Perfis / Roles
 |--------------------------------------------------------------------------
 */
-Route::prefix('roles')->group(function () {
+Route::prefix('roles')->group(function (): void {
+
     Route::screen('/', RoleListScreen::class)
         ->name('platform.systems.roles');
 
@@ -72,10 +79,17 @@ Route::prefix('roles')->group(function () {
 
 /*
 |--------------------------------------------------------------------------
-| Leis - Módulo Principal
+| Módulo de Leis
 |--------------------------------------------------------------------------
 */
-Route::prefix('leis')->group(function () {
+Route::prefix('leis')->group(function (): void {
+
+    /*
+    |--------------------------------------------------------------------------
+    | Leis – CRUD
+    |--------------------------------------------------------------------------
+    */
+
     Route::screen('/', LeiListScreen::class)
         ->name('platform.leis.list');
 
@@ -85,9 +99,27 @@ Route::prefix('leis')->group(function () {
     Route::screen('{lei}/editar', LeiEditScreen::class)
         ->name('platform.leis.edit');
 
+    /*
+    |--------------------------------------------------------------------------
+    | Artigos da Lei
+    |--------------------------------------------------------------------------
+    */
+
     Route::screen('{lei}/artigos', LeiArtigosScreen::class)
         ->name('platform.leis.artigos');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Revisão de Importação da Lei
+    |--------------------------------------------------------------------------
+    | IMPORTANTE:
+    | - Screen aceita APENAS {lei}
+    | - Artigos são carregados via async (Modal)
+    |--------------------------------------------------------------------------
+    */
 
     Route::screen('{lei}/revisao-importacao', LeiImportacaoReviewScreen::class)
         ->name('platform.leis.revisao');
 });
+
+
