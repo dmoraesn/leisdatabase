@@ -35,6 +35,7 @@ class ProcessarLeiPdfJob implements ShouldQueue
         $lei = Lei::findOrFail($this->leiId);
         $attachment = Attachment::findOrFail($this->attachmentId);
 
+        // Registro de log de importação no banco
         $importacao = LeiImportacao::create([
             'lei_id'      => $lei->id,
             'arquivo_pdf' => $attachment->original_name ?? $attachment->name,
@@ -43,7 +44,7 @@ class ProcessarLeiPdfJob implements ShouldQueue
 
         try {
             /**
-             * ✅ MONTAGEM CORRETA DO PATH DO ARQUIVO (ORCHID)
+             * 1. Resolução do caminho do arquivo (Suporte a Storage do Laravel/Orchid)
              */
             $fileName = $attachment->name;
 
@@ -56,56 +57,56 @@ class ProcessarLeiPdfJob implements ShouldQueue
 
             if (! is_file($pdfPath)) {
                 throw new \RuntimeException(
-                    'Arquivo PDF não encontrado: ' . $pdfPath
+                    'Arquivo PDF não encontrado no caminho físico: ' . $pdfPath
                 );
             }
 
             /**
-             * 1️⃣ Extração do texto bruto
+             * 2. Extração do texto bruto via Smalot/PdfParser
              */
             $parser = new Parser();
             $pdf = $parser->parseFile($pdfPath);
             $textoExtraido = $pdf->getText();
 
+            // Atualiza registro de importação com o texto bruto
             $importacao->update([
                 'texto_extraido' => $textoExtraido,
-                'status'         => 'concluida',
+                'status'         => 'concluida', // Texto extraído, agora vamos parsear
             ]);
 
             /**
-             * 2️⃣ Parse automático em artigos
+             * 3. Parse inteligente em artigos (Service)
              */
             $artigos = $parserService->parse($textoExtraido);
 
             /**
-             * 3️⃣ Remove apenas artigos automáticos antigos
+             * 4. Limpeza e Persistência
+             * CRÍTICO: Deleta APENAS artigos que NÃO foram editados manualmente.
              */
             $lei->artigos()
-                ->where('origem', 'auto')
+                ->where('origem', '!=', 'manual') // Proteção de dados manuais
                 ->delete();
 
-            /**
-             * 4️⃣ Persiste novos artigos
-             */
+            // Insere os novos artigos detectados
             foreach ($artigos as $artigo) {
                 $lei->artigos()->create([
                     'numero'     => $artigo['numero'],
                     'texto'      => $artigo['texto'],
                     'ordem'      => $artigo['ordem'],
-                    'origem'     => 'auto',
-                    'confidence' => $artigo['confidence'] ?? null,
+                    'origem'     => 'auto', // Marca explicitamente como automático
+                    'confidence' => $artigo['confidence'] ?? 'medium',
                 ]);
             }
 
             /**
-             * 5️⃣ Finaliza processamento
+             * 5. Finalização
              */
             $lei->update([
                 'status' => 'processada',
             ]);
 
         } catch (Throwable $e) {
-
+            // Em caso de erro, salva o log e atualiza o status da Lei
             $importacao->update([
                 'status' => 'erro',
                 'erro'   => $e->getMessage(),
@@ -115,6 +116,7 @@ class ProcessarLeiPdfJob implements ShouldQueue
                 'status' => 'erro',
             ]);
 
+            // Re-throw para o worker do Laravel saber que falhou
             throw $e;
         }
     }

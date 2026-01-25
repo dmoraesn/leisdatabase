@@ -6,14 +6,11 @@ namespace App\Orchid\Screens\Lei;
 
 use App\Jobs\ProcessarLeiPdfJob;
 use App\Models\Lei;
+use App\Orchid\Layouts\Lei\LeiLocalizacaoListener;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Http;
 use Orchid\Screen\Actions\Button;
-use Orchid\Screen\Actions\Link;
 use Orchid\Screen\Fields\Group;
 use Orchid\Screen\Fields\Input;
-use Orchid\Screen\Fields\Select;
 use Orchid\Screen\Fields\Upload;
 use Orchid\Screen\Screen;
 use Orchid\Support\Facades\Layout;
@@ -22,202 +19,148 @@ use Orchid\Support\Facades\Toast;
 class LeiEditScreen extends Screen
 {
     /**
-     * ⚠️ Propriedade pública NÃO tipada (regra do Orchid)
+     * @var Lei
      */
     public $lei;
 
-    /**
-     * Dados auxiliares
-     */
-    public array $estados = [];
-    public array $cidades = [];
-
-    /**
-     * Query inicial
-     */
-    public function query(Lei $lei, Request $request): iterable
+    public function query(Lei $lei): iterable
     {
-        $this->lei = $lei;
-
-        // Estados (IBGE)
-        $this->estados = Cache::remember('ibge_estados', 86400, function () {
-            $response = Http::get(
-                'https://servicodados.ibge.gov.br/api/v1/localidades/estados?orderBy=nome'
-            );
-
-            return $response->ok()
-                ? collect($response->json())->pluck('sigla', 'sigla')->toArray()
-                : [];
-        });
-
-        // Estado atual (input > banco)
-        $estadoAtual = $request->input('lei.estado') ?? $lei->estado;
-
-        // Cidades (IBGE)
-        if ($estadoAtual) {
-            $cacheKey = "ibge_cidades_{$estadoAtual}";
-
-            $this->cidades = Cache::remember($cacheKey, 86400, function () use ($estadoAtual) {
-                $response = Http::get(
-                    "https://servicodados.ibge.gov.br/api/v1/localidades/estados/{$estadoAtual}/municipios"
-                );
-
-                return $response->ok()
-                    ? collect($response->json())->pluck('nome', 'nome')->toArray()
-                    : [];
-            });
-        }
-
         return [
-            'lei'     => $lei,
-            'estados' => $this->estados,
-            'cidades' => $this->cidades,
+            'lei' => $lei,
         ];
     }
 
-    /**
-     * Nome da tela
-     */
     public function name(): string
     {
-        return 'Editar Lei';
+        return 'Editar Legislação';
     }
 
-    /**
-     * Barra de ações
-     */
+    public function description(): string
+    {
+        return 'Atualize as informações, abrangência ou o arquivo digital da norma.';
+    }
+
     public function commandBar(): iterable
     {
         return [
-            Button::make('Salvar')
-                ->icon('bs.save')
+            Button::make('Salvar Alterações')
+                ->icon('bs.check-circle')
                 ->method('save'),
-
-            Link::make('Revisar Importação')
-                ->icon('bs.search')
-                ->route('platform.leis.revisao', $this->lei)
-                ->canSee($this->lei->status === 'processada'),
-
+            
             Button::make('Reprocessar PDF')
                 ->icon('bs.arrow-repeat')
                 ->method('reprocessarPdf')
-                ->confirm(
-                    'O PDF será reprocessado. ' .
-                    'Artigos automáticos serão recriados, ' .
-                    'mas ajustes manuais serão preservados.'
-                )
-                ->canSee($this->lei->hasPdf()),
+                ->canSee($this->lei->exists && $this->lei->hasPdf()),
         ];
     }
 
-    /**
-     * Layout
-     */
     public function layout(): iterable
     {
         return [
-            Layout::rows([
-
+            // ---------------------------------------------------------
+            // BLOCO 1: Dados Principais
+            // ---------------------------------------------------------
+            Layout::block(Layout::rows([
                 Input::make('lei.titulo')
-                    ->title('Título')
+                    ->title('Título da Lei')
+                    ->placeholder('Digite o título completo')
                     ->required(),
 
                 Group::make([
                     Input::make('lei.numero')
-                        ->title('Número'),
+                        ->title('Número da Lei')
+                        ->placeholder('Ex: 12.345'),
 
                     Input::make('lei.ano')
                         ->type('number')
-                        ->title('Ano'),
+                        ->title('Ano de Publicação'),
                 ]),
+            ]))
+            ->title('Identificação da Norma')
+            ->description('Dados básicos de identificação e referência do documento.'),
 
-                Select::make('lei.abrangencia')
-                    ->title('Abrangência')
-                    ->options([
-                        'federal'   => 'Federal',
-                        'estadual'  => 'Estadual',
-                        'municipal' => 'Municipal',
-                    ])
-                    ->empty('Selecione'),
+            // ---------------------------------------------------------
+            // BLOCO 2: Localização (Listener Dinâmico)
+            // ---------------------------------------------------------
+            // Como atualizamos o Listener para retornar um Layout::block,
+            // basta chamá-lo aqui. Ele cuidará do título e descrição.
+            LeiLocalizacaoListener::class,
 
-                Group::make([
-                    Select::make('lei.estado')
-                        ->title('Estado (UF)')
-                        ->options($this->estados)
-                        ->empty('Selecione')
-                        ->submitOnChange(),
-
-                    Select::make('lei.cidade')
-                        ->title('Cidade')
-                        ->options($this->cidades)
-                        ->empty('Selecione o Estado primeiro')
-                        ->disabled(empty($this->cidades)),
-                ]),
-
+            // ---------------------------------------------------------
+            // BLOCO 3: Arquivos
+            // ---------------------------------------------------------
+            Layout::block(Layout::rows([
                 Upload::make('lei.pdf')
-                    ->title('PDF da Lei')
+                    ->title('Arquivo PDF da Lei')
                     ->groups('leis')
                     ->acceptedFiles('.pdf')
                     ->maxFiles(1)
-                    ->value(
-                        $this->lei
-                            ? $this->lei->attachment->pluck('id')->toArray()
-                            : []
-                    ),
-            ]),
+                    // Carrega os IDs dos anexos existentes
+                    ->value($this->lei->attachment->pluck('id')->toArray())
+                    ->help('Se você substituir o arquivo, o sistema reprocessará o texto e os artigos automaticamente.'),
+            ]))
+            ->title('Digitalização')
+            ->description('Gerenciamento do arquivo original e processamento.'),
         ];
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Actions
-    |--------------------------------------------------------------------------
-    */
-
     /**
-     * Salva alterações da Lei
+     * Salva as alterações, limpa dados inconsistentes e dispara Jobs.
      */
     public function save(Request $request, Lei $lei): void
     {
-        $data = $request->get('lei');
+        $dadosFormulario = $request->get('lei');
+        $abrangencia = $dadosFormulario['abrangencia'] ?? null;
 
-        $lei->update([
-            'titulo'      => $data['titulo'],
-            'numero'      => $data['numero'] ?? null,
-            'ano'         => $data['ano'] ?? null,
-            'abrangencia' => $data['abrangencia'] ?? null,
-            'estado'      => $data['estado'] ?? null,
-            'cidade'      => $data['cidade'] ?? null,
+        // 1. Validação Básica
+        $request->validate([
+            'lei.titulo'      => 'required|string|max:255',
+            'lei.abrangencia' => 'required',
         ]);
 
-        // Se PDF foi alterado, sincroniza e reprocessa automaticamente
-        if (! empty($data['pdf'])) {
-            $lei->attachment()->sync($data['pdf']);
-            $lei->update(['status' => 'processando']);
+        // 2. Regra de Higienização de Localização
+        if ($abrangencia === 'federal') {
+            $dadosFormulario['estado'] = null;
+            $dadosFormulario['cidade'] = null;
+        } elseif ($abrangencia === 'estadual') {
+            $dadosFormulario['cidade'] = null;
         }
 
-        Toast::success('Lei atualizada com sucesso.');
+        // 3. Persistência dos Dados
+        $lei->fill($dadosFormulario);
+        $lei->save();
+
+        // 4. Tratamento Inteligente do PDF
+        // Como o campo é 'lei.pdf', ele vem dentro do array 'lei'
+        $anexos = $dadosFormulario['pdf'] ?? [];
+        
+        $mudancas = $lei->attachment()->sync($anexos);
+
+        // Se houver novo arquivo anexado ('attached'), dispara o Job
+        if (count($mudancas['attached']) > 0) {
+            $novoAnexoId = $mudancas['attached'][0];
+
+            $lei->update(['status' => 'processando']);
+            ProcessarLeiPdfJob::dispatch($lei->id, $novoAnexoId);
+
+            Toast::info('Novo PDF salvo. O processamento iniciou em segundo plano.');
+        } else {
+            Toast::success('Os dados da lei foram atualizados com sucesso.');
+        }
     }
 
     /**
-     * Reprocessa explicitamente o PDF
+     * Ação manual para reprocessar PDF existente.
      */
     public function reprocessarPdf(Lei $lei): void
     {
-        $attachment = $lei->attachment()
-            ->orderBy('sort')
-            ->first();
-
-        if (! $attachment) {
-            Toast::error('Nenhum PDF encontrado para esta lei.');
-            return;
+        if ($lei->hasPdf()) {
+            $lei->update(['status' => 'processando']);
+            ProcessarLeiPdfJob::dispatch($lei->id, $lei->getPdf()->id);
+            
+            Toast::info('Solicitação enviada. O PDF será reprocessado.');
+        } else {
+            Toast::warning('Nenhum PDF encontrado para processar.');
         }
-
-        ProcessarLeiPdfJob::dispatch(
-            $lei->id,
-            $attachment->id
-        );
-
-        Toast::info('PDF enviado para reprocessamento.');
     }
 }

@@ -6,23 +6,33 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Str;
 use Orchid\Screen\AsSource;
 
 class Artigo extends Model
 {
     use AsSource;
 
+    /**
+     * @var string
+     */
     protected $table = 'artigos';
 
+    /**
+     * @var array
+     */
     protected $fillable = [
         'lei_id',
         'numero',
         'texto',
         'ordem',
-        'origem',
-        'confidence',
+        'origem', // 'auto' (importação) ou 'manual' (edição humana)
+        'confidence', // 'high', 'medium', 'low'
     ];
 
+    /**
+     * @var array
+     */
     protected $casts = [
         'ordem' => 'integer',
     ];
@@ -33,6 +43,11 @@ class Artigo extends Model
     |--------------------------------------------------------------------------
     */
 
+    /**
+     * Relacionamento reverso com a Lei.
+     *
+     * @return BelongsTo
+     */
     public function lei(): BelongsTo
     {
         return $this->belongsTo(Lei::class);
@@ -45,7 +60,10 @@ class Artigo extends Model
     */
 
     /**
-     * Texto completo do artigo (sem truncamento)
+     * Retorna o texto completo do artigo convertido para string.
+     * Útil para garantir que null vire string vazia.
+     *
+     * @return string
      */
     public function getTextoCompletoAttribute(): string
     {
@@ -53,14 +71,16 @@ class Artigo extends Model
     }
 
     /**
-     * Preview seguro para tabelas
+     * Gera um preview seguro para exibição em tabelas.
+     * Remove quebras de linha excessivas e trunca o texto.
+     *
+     * @return string
      */
     public function getTextoPreviewAttribute(): string
     {
-        return str($this->texto)
-            ->replace("\r\n", "\n")
-            ->replace("\r", "\n")
-            ->limit(350)
+        return Str::of($this->texto)
+            ->replace(["\r\n", "\r"], "\n")
+            ->limit(150, '...')
             ->toString();
     }
 }

@@ -4,14 +4,13 @@ declare(strict_types=1);
 
 namespace App\Orchid\Screens\Lei;
 
+use App\Jobs\ProcessarLeiPdfJob;
 use App\Models\Lei;
+use App\Orchid\Layouts\Lei\LeiLocalizacaoListener;
 use Illuminate\Http\Request;
-use Illuminate\Support\HtmlString; // Importação Obrigatória para renderizar HTML
 use Orchid\Screen\Actions\Button;
 use Orchid\Screen\Fields\Group;
 use Orchid\Screen\Fields\Input;
-use Orchid\Screen\Fields\Label;
-use Orchid\Screen\Fields\Select;
 use Orchid\Screen\Fields\Upload;
 use Orchid\Screen\Screen;
 use Orchid\Support\Facades\Layout;
@@ -19,25 +18,16 @@ use Orchid\Support\Facades\Toast;
 
 class LeiCreateScreen extends Screen
 {
-    /**
-     * Define o nome da tela exibido no cabeçalho.
-     */
     public function name(): ?string
     {
         return 'Cadastro de Legislação';
     }
 
-    /**
-     * Descrição da tela.
-     */
     public function description(): ?string
     {
-        return 'Preencha os dados abaixo para registrar uma nova lei no sistema.';
+        return 'Preencha os blocos abaixo para registrar uma nova lei.';
     }
 
-    /**
-     * Carrega os dados iniciais da tela.
-     */
     public function query(Request $request): iterable
     {
         return [
@@ -45,9 +35,6 @@ class LeiCreateScreen extends Screen
         ];
     }
 
-    /**
-     * Botões de ação na barra superior.
-     */
     public function commandBar(): iterable
     {
         return [
@@ -57,93 +44,99 @@ class LeiCreateScreen extends Screen
         ];
     }
 
-    /**
-     * Layout da tela.
-     */
     public function layout(): iterable
     {
         return [
-            Layout::columns([
-                // ---------------------------------------------------------
-                // COLUNA 1: Dados Principais (Com Título Interno)
-                // ---------------------------------------------------------
-                Layout::rows([
-                    // CORREÇÃO: Uso de HtmlString para renderizar o cabeçalho
-                    Label::make('header_dados')
-                        ->value(new HtmlString('
-                            <div class="mb-3">
-                                <h4 class="text-black font-thin">Dados da Lei</h4>
-                                <p class="text-muted small">Informações básicas do documento.</p>
-                                <hr class="my-2">
-                            </div>
-                        ')),
+            // ---------------------------------------------------------
+            // BLOCO 1: Dados Principais
+            // ---------------------------------------------------------
+            Layout::block(Layout::rows([
+                Input::make('lei.titulo')
+                    ->title('Título da Lei')
+                    ->placeholder('Ex: Lei Orgânica do Município...')
+                    ->required(),
 
-                    Input::make('lei.titulo')
-                        ->title('Título da Lei')
-                        ->placeholder('Ex: Dispõe sobre o plano diretor...')
-                        ->required(),
+                Group::make([
+                    Input::make('lei.numero')
+                        ->title('Número')
+                        ->placeholder('Ex: 12.345'),
 
-                    Group::make([
-                        Input::make('lei.numero')
-                            ->title('Número')
-                            ->placeholder('Ex: 12.345'),
+                    Input::make('lei.ano')
+                        ->type('number')
+                        ->title('Ano')
+                        ->placeholder((string) date('Y')),
+                ]),
+            ]))
+            ->title('Identificação da Norma')
+            ->description('Informações básicas para identificação do documento legal.'),
 
-                        Input::make('lei.ano')
-                            ->type('number')
-                            ->title('Ano')
-                            ->placeholder((string) date('Y')),
-                    ]),
+            // ---------------------------------------------------------
+            // BLOCO 2: Localização (Listener)
+            // ---------------------------------------------------------
+            // O próprio Listener agora retornará um Bloco visual
+            LeiLocalizacaoListener::class,
 
-                    Select::make('lei.abrangencia')
-                        ->title('Abrangência')
-                        ->options([
-                            'municipal' => 'Municipal',
-                            'estadual'  => 'Estadual',
-                            'federal'   => 'Federal',
-                        ])
-                        ->empty('Selecione')
-                        ->help('Define o nível de aplicação da lei.'),
-
-                    Upload::make('pdf')
-                        ->title('Arquivo Digital')
-                        ->acceptedFiles('.pdf')
-                        ->maxFiles(1),
-                ]), 
-
-                // ---------------------------------------------------------
-                // COLUNA 2: Localização (Blade Component)
-                // ---------------------------------------------------------
-                Layout::view('orchid.partials.location-selector'),
-            ]),
+            // ---------------------------------------------------------
+            // BLOCO 3: Arquivos
+            // ---------------------------------------------------------
+            Layout::block(Layout::rows([
+                Upload::make('pdf')
+                    ->title('Arquivo PDF Original')
+                    ->acceptedFiles('.pdf')
+                    ->maxFiles(1)
+                    ->help('O sistema processará este arquivo automaticamente para extrair os artigos.'),
+            ]))
+            ->title('Digitalização')
+            ->description('Faça o upload do texto original da lei.'),
         ];
     }
 
-    /**
-     * Ação de Salvar.
-     */
     public function save(Request $request)
     {
-        $request->validate([
-            'lei.titulo'      => ['required', 'string', 'min:3', 'max:255'],
-            'lei.estado'      => ['required', 'string', 'size:2'],
-            'lei.cidade'      => ['required', 'string'],
-        ], [
-            'lei.titulo.required' => 'O título da lei é obrigatório.',
-            'lei.estado.required' => 'Selecione um Estado.',
-            'lei.cidade.required' => 'Selecione uma Cidade.',
-        ]);
+        // 1. Validação
+        $dados = $request->input('lei');
+        $abrangencia = $dados['abrangencia'] ?? null;
 
+        $regras = [
+            'lei.titulo'      => ['required', 'string', 'min:3', 'max:255'],
+            'lei.abrangencia' => ['required', 'in:federal,estadual,municipal'],
+        ];
+
+        if ($abrangencia === 'estadual') {
+            $regras['lei.estado'] = ['required', 'string', 'size:2'];
+        }
+        if ($abrangencia === 'municipal') {
+            $regras['lei.estado'] = ['required', 'string', 'size:2'];
+            $regras['lei.cidade'] = ['required', 'string'];
+        }
+
+        $request->validate($regras);
+
+        // 2. Limpeza
+        if ($abrangencia === 'federal') {
+            $dados['estado'] = null;
+            $dados['cidade'] = null;
+        } elseif ($abrangencia === 'estadual') {
+            $dados['cidade'] = null;
+        }
+
+        // 3. Persistência
         $lei = Lei::create(array_merge(
-            $request->input('lei'),
+            $dados,
             ['status' => 'processando']
         ));
 
+        // 4. Upload e Job
         if ($request->filled('pdf')) {
             $lei->attachment()->sync($request->input('pdf'));
+            $anexo = $lei->attachment()->first();
+
+            if ($anexo) {
+                ProcessarLeiPdfJob::dispatch($lei->id, $anexo->id);
+            }
         }
 
-        Toast::info('Lei cadastrada com sucesso!');
-
+        Toast::info('Lei cadastrada! Processamento iniciado.');
         return redirect()->route('platform.leis.list');
     }
 }

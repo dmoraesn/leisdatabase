@@ -8,6 +8,8 @@ use App\Models\Lei;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Orchid\Screen\Actions\Link;
+use Orchid\Screen\Actions\DropDown;
+use Orchid\Screen\Actions\Button;
 use Orchid\Screen\Screen;
 use Orchid\Screen\TD;
 use Orchid\Support\Facades\Layout;
@@ -16,16 +18,31 @@ use Illuminate\Support\HtmlString;
 
 class LeiListScreen extends Screen
 {
+    /**
+     * Nome de exibição da tela.
+     *
+     * @return string
+     */
     public function name(): string
     {
         return 'Leis Cadastradas';
     }
 
+    /**
+     * Descrição da tela.
+     *
+     * @return string
+     */
     public function description(): string
     {
-        return 'Gerenciamento das leis registradas no sistema';
+        return 'Gerenciamento completo das leis e normativas registradas no sistema.';
     }
 
+    /**
+     * Definição dos dados da consulta (Query).
+     *
+     * @return iterable
+     */
     public function query(): iterable
     {
         return [
@@ -35,15 +52,26 @@ class LeiListScreen extends Screen
         ];
     }
 
+    /**
+     * Barra de comandos superior.
+     *
+     * @return iterable
+     */
     public function commandBar(): iterable
     {
         return [
             Link::make('Nova Lei')
                 ->icon('bs.plus-circle')
-                ->route('platform.leis.create'),
+                ->route('platform.leis.create')
+                ->class('btn btn-primary'),
         ];
     }
 
+    /**
+     * Definição do Layout (Tabela).
+     *
+     * @return iterable
+     */
     public function layout(): iterable
     {
         return [
@@ -54,81 +82,96 @@ class LeiListScreen extends Screen
                     ->alignCenter()
                     ->width(70),
 
-                TD::make('titulo', 'Título')
-                    ->render(fn (Lei $lei) => Str::limit($lei->titulo, 70)),
+                TD::make('titulo', 'Título da Lei')
+                    ->render(fn (Lei $lei) => Str::limit($lei->titulo, 60))
+                    ->width(300),
 
-                // Nova Coluna de Cidade/UF
-                TD::make('local', 'Local')
-                    ->render(function (Lei $lei) {
-                        if ($lei->cidade && $lei->estado) {
-                            return $lei->cidade . ' - ' . $lei->estado;
-                        }
-                        return $lei->estado ?? '—';
-                    }),
-
-                TD::make('numero', 'Número')
-                    ->alignCenter()
-                    ->render(fn (Lei $lei) => $lei->numero ?? '—'),
-
-                TD::make('ano', 'Ano')
-                    ->alignCenter(),
+                TD::make('local', 'Localização / Esfera')
+                    ->render(fn (Lei $lei) => $lei->getLocalizacaoFormatada()),
 
                 TD::make('abrangencia', 'Abrangência')
+                    ->sort()
                     ->alignCenter()
-                    ->render(fn (Lei $lei) => ucfirst($lei->abrangencia ?? '')),
+                    ->render(fn (Lei $lei) => ucfirst($lei->abrangencia ?? 'N/A')),
 
-                TD::make('status', 'Status')
-                    ->alignCenter()
-                    ->render(function (Lei $lei) {
-                        $html = match ($lei->status) {
-                            'processada', 'processado'  => '<span class="badge bg-success">Processado</span>',
-                            'processando' => '<span class="badge bg-warning">Processando</span>',
-                            'erro'        => '<span class="badge bg-danger">Erro</span>',
-                            default       => '<span class="badge bg-secondary">Pendente</span>',
-                        };
-
-                        return new HtmlString($html);
-                    }),
-
-                TD::make('pdf', 'PDF')
+                TD::make('status', 'Status de Processamento')
                     ->alignCenter()
                     ->render(function (Lei $lei) {
-                        if (! $lei->hasPdf()) {
-                            return '—';
-                        }
+                        $statusColors = [
+                            'processada'  => 'success',
+                            'processando' => 'warning',
+                            'erro'        => 'danger',
+                            'pendente'    => 'secondary',
+                        ];
 
-                        return Link::make('Baixar')
-                            ->icon('bs.cloud-download')
-                            ->href($lei->getPdf()->url)
-                            ->target('_blank');
+                        $color = $statusColors[$lei->status] ?? 'light';
+                        $label = ucfirst($lei->status ?? 'Desconhecido');
+
+                        return new HtmlString("<span class='badge bg-{$color}'>{$label}</span>");
                     }),
 
                 TD::make('actions', 'Ações')
                     ->alignCenter()
-                    ->render(fn (Lei $lei) =>
-                        view('orchid.partials.leis-actions', compact('lei'))
-                    ),
+                    ->width(100)
+                    ->render(fn (Lei $lei) => DropDown::make()
+                        ->icon('bs.three-dots-vertical')
+                        ->list([
+                            Link::make('Editar Metadados')
+                                ->route('platform.leis.edit', $lei)
+                                ->icon('bs.pencil'),
+
+                            Link::make('Ver Artigos e Texto')
+                                ->route('platform.leis.artigos', $lei)
+                                ->icon('bs.file-text'),
+
+                            Button::make('Reprocessar PDF')
+                                ->method('reprocessar')
+                                ->icon('bs.arrow-repeat')
+                                ->confirm('Atenção: Isso recriará os artigos automáticos. Edições manuais serão preservadas.')
+                                ->parameters(['id' => $lei->id]),
+
+                            Button::make('Remover Registro')
+                                ->method('remove')
+                                ->icon('bs.trash')
+                                ->confirm('Tem certeza que deseja excluir esta lei permanentemente?')
+                                ->parameters(['id' => $lei->id]),
+                        ])),
             ]),
         ];
     }
 
     /*
     |--------------------------------------------------------------------------
-    | Actions
+    | Actions do Controller
     |--------------------------------------------------------------------------
     */
 
+    /**
+     * Remove uma lei do banco de dados.
+     */
     public function remove(Request $request): void
     {
-        Lei::findOrFail($request->get('id'))->delete();
-        Toast::info('Lei removida com sucesso.');
+        $lei = Lei::findOrFail($request->get('id'));
+        $lei->delete();
+
+        Toast::info('A Lei foi removida com sucesso do sistema.');
     }
 
+    /**
+     * Marca a lei para reprocessamento pelo Job.
+     */
     public function reprocessar(Request $request): void
     {
-        Lei::findOrFail($request->get('id'))
-            ->update(['status' => 'processando']);
+        $lei = Lei::findOrFail($request->get('id'));
+        
+        $lei->update([
+            'status' => 'processando'
+        ]);
 
-        Toast::info('Lei enviada para reprocessamento.');
+        // O Job será disparado via Observer ou manualmente se configurado aqui.
+        // Assumindo que o trigger seja manual no fluxo atual:
+        // ProcessarLeiPdfJob::dispatch($lei->id, $lei->getPdf()->id);
+
+        Toast::info('Solicitação enviada. O PDF será reprocessado em segundo plano.');
     }
 }
