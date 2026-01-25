@@ -15,19 +15,36 @@ use Orchid\Screen\Fields\Upload;
 use Orchid\Screen\Screen;
 use Orchid\Support\Facades\Layout;
 use Orchid\Support\Facades\Toast;
+use Illuminate\Http\RedirectResponse; // Importante para tipagem do retorno
 
 class LeiCreateScreen extends Screen
 {
+    /**
+     * Define o nome da tela exibido no cabeçalho.
+     *
+     * @return string|null
+     */
     public function name(): ?string
     {
         return 'Cadastro de Legislação';
     }
 
+    /**
+     * Descrição da tela.
+     *
+     * @return string|null
+     */
     public function description(): ?string
     {
-        return 'Preencha os blocos abaixo para registrar uma nova lei.';
+        return 'Preencha os blocos abaixo para registrar uma nova lei no sistema.';
     }
 
+    /**
+     * Carrega os dados iniciais da tela.
+     *
+     * @param Request $request
+     * @return iterable
+     */
     public function query(Request $request): iterable
     {
         return [
@@ -35,6 +52,11 @@ class LeiCreateScreen extends Screen
         ];
     }
 
+    /**
+     * Botões de ação na barra superior.
+     *
+     * @return iterable
+     */
     public function commandBar(): iterable
     {
         return [
@@ -44,6 +66,11 @@ class LeiCreateScreen extends Screen
         ];
     }
 
+    /**
+     * Layout da tela dividido em blocos lógicos.
+     *
+     * @return iterable
+     */
     public function layout(): iterable
     {
         return [
@@ -54,6 +81,7 @@ class LeiCreateScreen extends Screen
                 Input::make('lei.titulo')
                     ->title('Título da Lei')
                     ->placeholder('Ex: Lei Orgânica do Município...')
+                    ->help('O título deve ser claro e descritivo.')
                     ->required(),
 
                 Group::make([
@@ -68,12 +96,11 @@ class LeiCreateScreen extends Screen
                 ]),
             ]))
             ->title('Identificação da Norma')
-            ->description('Informações básicas para identificação do documento legal.'),
+            ->description('Informações básicas para identificação oficial do documento legal.'),
 
             // ---------------------------------------------------------
-            // BLOCO 2: Localização (Listener)
+            // BLOCO 2: Localização (Listener Dinâmico)
             // ---------------------------------------------------------
-            // O próprio Listener agora retornará um Bloco visual
             LeiLocalizacaoListener::class,
 
             // ---------------------------------------------------------
@@ -84,16 +111,23 @@ class LeiCreateScreen extends Screen
                     ->title('Arquivo PDF Original')
                     ->acceptedFiles('.pdf')
                     ->maxFiles(1)
-                    ->help('O sistema processará este arquivo automaticamente para extrair os artigos.'),
+                    ->help('O sistema processará este arquivo automaticamente para extrair os artigos. Certifique-se de que o PDF é pesquisável (OCR).'),
             ]))
             ->title('Digitalização')
-            ->description('Faça o upload do texto original da lei.'),
+            ->description('Faça o upload do texto original da lei para processamento.'),
         ];
     }
 
-    public function save(Request $request)
+    /**
+     * Ação de Salvar.
+     * Realiza validação, limpeza, persistência e dispara o job de processamento.
+     *
+     * @param Request $request
+     * @return RedirectResponse
+     */
+    public function save(Request $request): RedirectResponse
     {
-        // 1. Validação
+        // 1. Validação dos dados recebidos
         $dados = $request->input('lei');
         $abrangencia = $dados['abrangencia'] ?? null;
 
@@ -102,6 +136,7 @@ class LeiCreateScreen extends Screen
             'lei.abrangencia' => ['required', 'in:federal,estadual,municipal'],
         ];
 
+        // Regras condicionais baseadas na abrangência
         if ($abrangencia === 'estadual') {
             $regras['lei.estado'] = ['required', 'string', 'size:2'];
         }
@@ -110,9 +145,14 @@ class LeiCreateScreen extends Screen
             $regras['lei.cidade'] = ['required', 'string'];
         }
 
-        $request->validate($regras);
+        $request->validate($regras, [
+            'lei.titulo.required'      => 'O título da lei é obrigatório.',
+            'lei.abrangencia.required' => 'A abrangência é obrigatória.',
+            'lei.estado.required'      => 'Para leis estaduais/municipais, o Estado é obrigatório.',
+            'lei.cidade.required'      => 'Para leis municipais, a Cidade é obrigatória.',
+        ]);
 
-        // 2. Limpeza
+        // 2. Limpeza de dados (Sanitization)
         if ($abrangencia === 'federal') {
             $dados['estado'] = null;
             $dados['cidade'] = null;
@@ -120,15 +160,17 @@ class LeiCreateScreen extends Screen
             $dados['cidade'] = null;
         }
 
-        // 3. Persistência
+        // 3. Persistência da Lei no Banco de Dados
         $lei = Lei::create(array_merge(
             $dados,
             ['status' => 'processando']
         ));
 
-        // 4. Upload e Job
+        // 4. Associação do PDF e Disparo do Job
         if ($request->filled('pdf')) {
             $lei->attachment()->sync($request->input('pdf'));
+            
+            // Recupera o anexo recém salvo para garantir que temos o ID correto
             $anexo = $lei->attachment()->first();
 
             if ($anexo) {
@@ -136,7 +178,9 @@ class LeiCreateScreen extends Screen
             }
         }
 
-        Toast::info('Lei cadastrada! Processamento iniciado.');
+        Toast::info('Lei cadastrada com sucesso! O processamento iniciou em segundo plano.');
+
+        // REDIRECIONAMENTO EXPLÍCITO PARA A LISTA
         return redirect()->route('platform.leis.list');
     }
 }

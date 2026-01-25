@@ -28,12 +28,15 @@ class LeiArtigosScreen extends Screen
 
     /**
      * Query data.
+     *
+     * @param Lei $lei
+     * @return iterable
      */
     public function query(Lei $lei): iterable
     {
         return [
             'lei' => $lei,
-            // Mantemos a ordenação por 'ordem' no banco para garantir a sequência correta
+            // Mantemos a ordenação lógica por 'ordem' no banco
             'artigos' => $lei->artigos()
                 ->orderBy('ordem', 'asc')
                 ->orderBy('id', 'asc')
@@ -42,7 +45,9 @@ class LeiArtigosScreen extends Screen
     }
 
     /**
-     * Nome da tela.
+     * Nome da tela exibido no cabeçalho.
+     *
+     * @return string|null
      */
     public function name(): ?string
     {
@@ -50,7 +55,9 @@ class LeiArtigosScreen extends Screen
     }
 
     /**
-     * Descrição.
+     * Descrição da tela.
+     *
+     * @return string|null
      */
     public function description(): ?string
     {
@@ -59,6 +66,8 @@ class LeiArtigosScreen extends Screen
 
     /**
      * Barra de comandos.
+     *
+     * @return iterable
      */
     public function commandBar(): iterable
     {
@@ -76,43 +85,56 @@ class LeiArtigosScreen extends Screen
     }
 
     /**
-     * Layout.
+     * Layout da tela (Tabela Otimizada).
+     *
+     * @return iterable
      */
     public function layout(): iterable
     {
         return [
             Layout::table('artigos', [
                 
-                // --- REMOVIDA A COLUNA 'ORDEM' VISUALMENTE ---
-                // A ordem continua existindo no banco para fins de classificação,
-                // mas não polui mais a tela do usuário.
-
-                TD::make('numero', 'Artigo') // Renomeado para "Artigo" para ficar mais natural
-                    ->width(100)
+                // Coluna: Numeração
+                // width: 80px (Fixo pequeno para não ocupar espaço)
+                TD::make('numero', 'Art.')
+                    ->width(80)
                     ->render(fn (Artigo $a) => 
-                        // Destaque visual para o número
-                        "<span class='text-dark fw-bold' style='font-size: 1.1em;'>{$a->numero}</span>"
+                        "<span class='text-dark fw-bold' style='white-space: nowrap;'>{$a->numero}</span>"
                     ),
 
+                // Coluna: Conteúdo (Texto)
+                // Sem width fixo = Ocupa o espaço restante disponível (Flex)
                 TD::make('texto', 'Conteúdo')
                     ->render(function (Artigo $a) {
-                        return ModalToggle::make(Str::limit($a->texto, 140))
+                        // Limitamos o texto para não estourar a altura da linha excessivamente
+                        // O ModalToggle permite ver tudo ao clicar
+                        return ModalToggle::make(Str::limit($a->texto, 100))
                             ->modal('artigoModal')
                             ->method('saveArtigo')
                             ->asyncParameters(['artigo_id' => $a->id])
-                            ->style('text-decoration: none; color: #57606a; display: block;');
+                            ->style('
+                                text-decoration: none; 
+                                color: #57606a; 
+                                display: block;
+                                word-wrap: break-word; /* Garante quebra de linha */
+                                white-space: normal;   /* Permite múltiplas linhas */
+                            ');
                     }),
 
-                TD::make('confidence', 'Confiança')
+                // Coluna: Confiança
+                // width: 100px
+                TD::make('confidence', 'Conf.')
                     ->width(100)
                     ->alignCenter()
                     ->render(fn (Artigo $a) => new HtmlString(match ($a->confidence) {
-                        'high'   => '<span class="badge bg-success">Alta</span>',
-                        'medium' => '<span class="badge bg-warning text-dark">Média</span>',
-                        'low'    => '<span class="badge bg-danger">Baixa</span>',
+                        'high'   => '<span class="badge bg-success" title="Confiança Alta">Alta</span>',
+                        'medium' => '<span class="badge bg-warning text-dark" title="Confiança Média">Média</span>',
+                        'low'    => '<span class="badge bg-danger" title="Confiança Baixa">Baixa</span>',
                         default  => '<span class="badge bg-light text-dark">N/A</span>',
                     })),
 
+                // Coluna: Origem
+                // width: 100px
                 TD::make('origem', 'Origem')
                     ->width(100)
                     ->alignCenter()
@@ -120,14 +142,17 @@ class LeiArtigosScreen extends Screen
                         ? '<span class="badge bg-info text-dark">Manual</span>'
                         : '<span class="badge bg-light text-dark border">Auto</span>'),
                 
-                TD::make('actions', 'Ações')
+                // Coluna: Ações
+                // width: 60px (Compacto)
+                TD::make('actions', '')
                     ->alignRight()
-                    ->width(80)
+                    ->width(60)
                     ->render(fn (Artigo $a) => Button::make('')
                         ->icon('bs.trash')
                         ->confirm('Tem certeza que deseja remover este artigo?')
                         ->method('removeArtigo', ['id' => $a->id])
-                        ->class('btn btn-link text-danger')
+                        ->class('btn btn-link text-danger p-0') // p-0 reduz padding do botão
+                        ->title('Remover Artigo')
                     ),
             ]),
 
@@ -138,20 +163,20 @@ class LeiArtigosScreen extends Screen
 
                 Input::make('artigo.numero')
                     ->title('Numeração (Ex: 1º, 22-A)')
-                    ->required(),
+                    ->required()
+                    ->help('Identificador único do artigo dentro da lei.'),
 
-                // Mantemos o campo Ordem no modal para casos de ajuste fino,
-                // mas ele não aparece mais na tabela principal.
                 Input::make('artigo.ordem')
                     ->type('number')
                     ->title('Ordem Sequencial')
-                    ->help('Use este campo apenas para reordenar artigos fora de sequência.'),
+                    ->help('Utilizado apenas para ordenação interna. Deixe vazio para automático.'),
 
                 TextArea::make('artigo.texto')
                     ->title('Texto Completo')
                     ->rows(12)
                     ->required()
-                    ->style('font-family: monospace; font-size: 14px; line-height: 1.5;'),
+                    ->style('font-family: monospace; font-size: 14px; line-height: 1.5;')
+                    ->help('Digite o teor completo do artigo.'),
             ]))
             ->async('asyncGetArtigo')
             ->title('Editar / Criar Artigo')
@@ -161,7 +186,11 @@ class LeiArtigosScreen extends Screen
     }
 
     /**
-     * Carrega dados para o modal.
+     * Carrega dados para o modal via AJAX.
+     *
+     * @param Lei $lei
+     * @param Request $request
+     * @return array
      */
     public function asyncGetArtigo(Lei $lei, Request $request): array
     {
@@ -174,7 +203,10 @@ class LeiArtigosScreen extends Screen
     }
 
     /**
-     * Salva o artigo.
+     * Salva ou atualiza o artigo, forçando a origem como 'manual'.
+     *
+     * @param Lei $lei
+     * @param Request $request
      */
     public function saveArtigo(Lei $lei, Request $request): void
     {
@@ -192,21 +224,29 @@ class LeiArtigosScreen extends Screen
             'numero'     => $dados['artigo']['numero'],
             'texto'      => $dados['artigo']['texto'],
             'ordem'      => $dados['artigo']['ordem'] ?? 0,
+            
+            // PROTEÇÃO DE DADOS:
+            // Artigos editados manualmente nunca serão apagados pelo robô de PDF.
             'origem'     => 'manual', 
             'confidence' => 'high',
         ]);
 
         $artigo->save();
+
         Toast::success('Artigo salvo com sucesso.');
     }
 
     /**
-     * Remove artigo.
+     * Remove um artigo individualmente.
+     *
+     * @param Lei $lei
+     * @param Request $request
      */
     public function removeArtigo(Lei $lei, Request $request): void
     {
         $artigo = Artigo::findOrFail($request->get('id'));
         $artigo->delete();
-        Toast::info('Artigo removido.');
+
+        Toast::info('Artigo removido permanentemente.');
     }
 }

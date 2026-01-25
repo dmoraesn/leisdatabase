@@ -15,6 +15,7 @@ use Orchid\Screen\Fields\Upload;
 use Orchid\Screen\Screen;
 use Orchid\Support\Facades\Layout;
 use Orchid\Support\Facades\Toast;
+use Illuminate\Http\RedirectResponse;
 
 class LeiEditScreen extends Screen
 {
@@ -23,6 +24,12 @@ class LeiEditScreen extends Screen
      */
     public $lei;
 
+    /**
+     * Query data.
+     *
+     * @param Lei $lei
+     * @return iterable
+     */
     public function query(Lei $lei): iterable
     {
         return [
@@ -30,16 +37,31 @@ class LeiEditScreen extends Screen
         ];
     }
 
+    /**
+     * Nome da tela.
+     *
+     * @return string
+     */
     public function name(): string
     {
         return 'Editar Legislação';
     }
 
+    /**
+     * Descrição da tela.
+     *
+     * @return string
+     */
     public function description(): string
     {
         return 'Atualize as informações, abrangência ou o arquivo digital da norma.';
     }
 
+    /**
+     * Barra de comandos.
+     *
+     * @return iterable
+     */
     public function commandBar(): iterable
     {
         return [
@@ -54,6 +76,11 @@ class LeiEditScreen extends Screen
         ];
     }
 
+    /**
+     * Layout da tela (Blocos).
+     *
+     * @return iterable
+     */
     public function layout(): iterable
     {
         return [
@@ -82,8 +109,6 @@ class LeiEditScreen extends Screen
             // ---------------------------------------------------------
             // BLOCO 2: Localização (Listener Dinâmico)
             // ---------------------------------------------------------
-            // Como atualizamos o Listener para retornar um Layout::block,
-            // basta chamá-lo aqui. Ele cuidará do título e descrição.
             LeiLocalizacaoListener::class,
 
             // ---------------------------------------------------------
@@ -95,7 +120,6 @@ class LeiEditScreen extends Screen
                     ->groups('leis')
                     ->acceptedFiles('.pdf')
                     ->maxFiles(1)
-                    // Carrega os IDs dos anexos existentes
                     ->value($this->lei->attachment->pluck('id')->toArray())
                     ->help('Se você substituir o arquivo, o sistema reprocessará o texto e os artigos automaticamente.'),
             ]))
@@ -105,9 +129,13 @@ class LeiEditScreen extends Screen
     }
 
     /**
-     * Salva as alterações, limpa dados inconsistentes e dispara Jobs.
+     * Salva as alterações, limpa dados inconsistentes e dispara Jobs se necessário.
+     *
+     * @param Request $request
+     * @param Lei $lei
+     * @return RedirectResponse
      */
-    public function save(Request $request, Lei $lei): void
+    public function save(Request $request, Lei $lei): RedirectResponse
     {
         $dadosFormulario = $request->get('lei');
         $abrangencia = $dadosFormulario['abrangencia'] ?? null;
@@ -131,12 +159,12 @@ class LeiEditScreen extends Screen
         $lei->save();
 
         // 4. Tratamento Inteligente do PDF
-        // Como o campo é 'lei.pdf', ele vem dentro do array 'lei'
         $anexos = $dadosFormulario['pdf'] ?? [];
         
+        // O método sync retorna o que mudou (attached, detached, updated)
         $mudancas = $lei->attachment()->sync($anexos);
 
-        // Se houver novo arquivo anexado ('attached'), dispara o Job
+        // Se houver novo arquivo anexado, dispara o Job
         if (count($mudancas['attached']) > 0) {
             $novoAnexoId = $mudancas['attached'][0];
 
@@ -147,10 +175,15 @@ class LeiEditScreen extends Screen
         } else {
             Toast::success('Os dados da lei foram atualizados com sucesso.');
         }
+
+        // REDIRECIONAMENTO EXPLÍCITO PARA A LISTA
+        return redirect()->route('platform.leis.list');
     }
 
     /**
      * Ação manual para reprocessar PDF existente.
+     *
+     * @param Lei $lei
      */
     public function reprocessarPdf(Lei $lei): void
     {
